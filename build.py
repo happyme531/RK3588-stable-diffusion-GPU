@@ -30,8 +30,9 @@ def _parse_args():
         if system() == "Darwin":
             target = tvm.target.Target("apple/m1-gpu")
         else:
-            has_gpu = tvm.cuda().exist
-            target = tvm.target.Target("cuda" if has_gpu else "llvm")
+            # has_gpu = tvm.cuda().exist
+            # target = tvm.target.Target("cuda" if has_gpu else "llvm")
+            target = tvm.target.Target("opencl -device=mali -max_shared_memory_per_block=32768 -max_threads_per_block=1024 -max_num_threads=1024 -thread_warp_size=16")
         print(f"Automatically configuring target: {target}")
         parsed.target = tvm.target.Target(target, host="llvm")
     elif parsed.target == "webgpu":
@@ -108,6 +109,7 @@ def legalize_and_lift_params(
     entry_funcs = (
         model_names + scheduler_func_names + ["image_to_rgba", "concat_embeddings"]
     )
+    print(f"Entry functions: {entry_funcs}")
 
     mod = relax.pipeline.get_pipeline()(mod)
     mod = relax.transform.DeadCodeElimination(entry_funcs)(mod)
@@ -128,10 +130,83 @@ def legalize_and_lift_params(
 def build(mod: tvm.IRModule, args: Dict) -> None:
     from tvm import meta_schedule as ms
 
-    db = ms.database.create(work_dir=args.db_path)
-    with args.target, db, tvm.transform.PassContext(opt_level=3):
-        mod_deploy = relax.transform.MetaScheduleApplyDatabase(enable_warning=True)(mod)
+    # # tuning part
+    # # delete the VAE part of the model when tuning u-net. It will interfere with the tuning. Also it can run on NPU? https://clehaxze.tw/gemlog/2023/07-15-inexhaustive-list-of-models-that-works-on-rk3588.gmi
+    # entry_funcs = ['clip', 'unet', 'dpm_solver_multistep_scheduler_convert_model_output', 'dpm_solver_multistep_scheduler_step', 'pndm_scheduler_step_0', 'pndm_scheduler_step_1', 'pndm_scheduler_step_2', 'pndm_scheduler_step_3', 'pndm_scheduler_step_4', 'image_to_rgba', 'concat_embeddings']
+    # new_mod = tvm.IRModule()
+    # for gv, func in mod.functions.items():
+    #     try:
+    #         if func.attrs["global_symbol"] == "main" and func.attrs["num_input"] == 1: # vae
+    #             continue
+    #     except:
+    #         pass
+    #     new_mod[gv] = func
+    # mod = new_mod
+    # mod = relax.transform.DeadCodeElimination(entry_funcs)(mod)
+    # debug_dump_script(mod, "mod_tune.py", args)
+    
+    # # Important!! run `echo 99999999999 > /sys/class/misc/mali0/device/progress_timeout` before tuning to avoid timeout issue 1
+    # # run tuning
+    # ms.relax_integration.tune_relax(
+    #     mod=mod,
+    #     target=args.target,
+    #     params={},
+    #     builder=ms.builder.LocalBuilder(
+    #         max_workers=7,
+    #         timeout_sec=450,
+    #     ),
+    #     op_names={"softmax2"},
+    #     runner=ms.runner.LocalRunner(timeout_sec=120,  # need to be that long!
+    #                                  maximum_process_uses=1, # to avoid buggy behaivour of mali opencl that subsequent runs fail after the first failure # this code change is not committed yet
+    #                                  evaluator_config=ms.runner.config.EvaluatorConfig(
+    #                                         number=1,    # avoid timeout 2
+    #                                         repeat=1,
+    #                                         min_repeat_ms=0,  # https://github.com/apache/tvm/issues/16276
+    #                                  )),
+    #     work_dir="log_db_my",
+    #     max_trials_global=100000,
+    #     max_trials_per_task=8000,
+    #     seed=42,
+    #     num_trials_per_iter=32,
+    # )
+    # mydb = ms.database.create(work_dir="log_db_my")
+    # mydb1 = ms.database.create(work_dir="log_db_my_pruned2_novae")
+    # mydb.dump_pruned(
+    #     mydb1,
+    # )
+    # db = ms.database.create(work_dir=args.db_path)
+    # with args.target, mydb, tvm.transform.PassContext(opt_level=3):
+    #     mod_deploy = relax.transform.MetaScheduleApplyDatabase(enable_warning=True)(mod)
+    mod_deploy = mod
+    print("Applying database 1 =======================")
+    db3 = ms.database.create(work_dir="log_db_my_unet_softmax2") # For some reason, the softmax2 op run very slow on Mali GPU, so I need to tune it separately
+    with args.target, db3, tvm.transform.PassContext(opt_level=3):
+        mod_deploy = relax.transform.MetaScheduleApplyDatabase(enable_warning=True)(mod_deploy)
+    print("Applying database 2 =======================")
+    db0 = ms.database.create(work_dir="log_db_my_clip_unet") # The clip and unet part of the model
+    with args.target, db0, tvm.transform.PassContext(opt_level=3):
+        mod_deploy = relax.transform.MetaScheduleApplyDatabase(enable_warning=True)(mod_deploy)
+    print("Applying database 3 =======================")
+    db2 = ms.database.create(work_dir="log_db_my_vae") # The vae part of the model (Not tuned very well yet)
+    with args.target, db2, tvm.transform.PassContext(opt_level=3):
+        mod_deploy = relax.transform.MetaScheduleApplyDatabase(enable_warning=True)(mod_deploy)
+    print("Generating missing schedules ==============")  
+    with tvm.target.Target("cuda"):
+        mod_deploy = tvm.tir.transform.DefaultGPUSchedule()(mod_deploy) # for some missing schedules
 
+    # i don't know why but the u-net, vae, clip symbol names changed to main and subgraph_0
+    # get the original symbol names back
+    # Delete this part if it is not necessary
+    for gv, func in mod_deploy.functions.items():
+        try:
+            if func.attrs["global_symbol"] == "main" and func.attrs["num_input"] == 3: # u-net
+                mod_deploy[gv] = func.with_attr("global_symbol", "unet")
+            if func.attrs["global_symbol"] == "main" and func.attrs["num_input"] == 1: # vae
+                mod_deploy[gv] = func.with_attr("global_symbol", "vae")
+            if func.attrs["global_symbol"] == "subgraph_0":
+                mod_deploy[gv] = func.with_attr("global_symbol", "clip")
+        except:
+            pass
     debug_dump_script(mod_deploy, "mod_build_stage.py", args)
 
     ex = relax.build(mod_deploy, args.target)
@@ -145,6 +220,7 @@ def build(mod: tvm.IRModule, args: Dict) -> None:
 
     debug_dump_shader(ex, f"stable_diffusion_{target_kind}", args)
     ex.export_library(os.path.join(args.artifact_path, output_filename))
+    print(ex.stats())
 
 
 if __name__ == "__main__":

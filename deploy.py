@@ -23,9 +23,9 @@ def _parse_args():
     args.add_argument("--debug-dump", action="store_true", default=False)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument(
-        "--prompt", type=str, default="A photo of an astronaut riding a horse on mars."
+        "--prompt", type=str, default="masterpiece, best quality, A photo of an astronaut riding a horse on mars."
     )
-    args.add_argument("--negative-prompt", type=str, default="")
+    args.add_argument("--negative-prompt", type=str, default="cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, blurry")
     args.add_argument(
         "--scheduler",
         type=str,
@@ -114,7 +114,7 @@ class TVMSDPipeline:
             noise_pred = self.unet_latents_to_noise_pred(latents, t, text_embeddings)
             self.debug_dump(f"unet_output_{i}", noise_pred)
             latents = self.scheduler.step(self.vm, noise_pred, latents, i)
-
+            latents.numpy() # Force a copy to avoid memory leak
         self.debug_dump("vae_input", latents)
         image = self.vae_to_image(latents)
         self.debug_dump("vae_output", image)

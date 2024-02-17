@@ -10,11 +10,13 @@ from .models.autoencoder_kl import AutoencoderKL
 
 
 def detect_available_torch_device() -> str:
+
     if tvm.metal().exist:
         return "mps"
     elif tvm.cuda().exist:
         return "cuda"
-    raise ValueError("At least one GPU backend is expected to be enabled")
+    # raise ValueError("At least one GPU backend is expected to be enabled")
+    return "cpu"
 
 
 def get_unet(
