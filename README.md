@@ -1,3 +1,63 @@
+# MLC Stable Diffusion for RK3588's Mali GPU 
+
+Run Stable Diffusion on RK3588's Mali GPU with MLC/TVM.
+
+Currently generate a 512x512 image costs about 500 seconds (including model loading and GPU kernel compilation time. The actual inference time is less). The U-Net runs at 21sec per iteration.
+
+### Build
+
+1. Get a Stable Diffusion 1.5 model from Hugging Face/CivitAI/whatever model site. You can use any fine-tuned model since all of them are based on the same architecture.
+
+2. The model is likely in .safetensor/.pth format. Convert it to Hugging Face Diffusers format using `convert_model_from_pth_safetensors.py` script. You can use the following command to convert the model:
+
+```shell
+python ./convert_model_from_pth_safetensors.py --checkpoint_path ./anythingv5.safetensors --dump_path ./anythingv5/ --from_safetensors --original_config_file ./v1-inference.yaml
+```
+(This can be done on any machine, not necessarily on the RK3588)
+
+3. Install TVM. Follow [TVM’s documentation](https://tvm.apache.org/docs/install/from_source.html) to build from latest master source. **Please enable the OpenCL backend**
+
+4. You may need to check OpenCL support on your RK3588. Follow https://llm.mlc.ai/docs/install/gpu.html#orange-pi-5-rk3588-based-sbc .
+
+5. Build the model using the following command:
+
+```shell
+python ./build.py
+```
+
+The warning about missing tuned operators is expected. The build script will generate a `dist` directory with the built model.
+
+6. Run the model using the following command:
+
+```shell
+python ./deploy.py --device-name opencl
+```
+
+## Tuning
+
+TODO, Check the build.py script.
+
+## Limitations
+
+- Model is running in FP32. FP16 would be faster and smaller in memory but I don't know how to convert the model to FP16.
+- The model is under-tuned because tuning it is so slow (The current result is from a 48-hour tuning). The model can be further optimized by tuning it for a longer time. But try FP16 first!
+
+## Why not NPU? More FLOPS!
+
+- The RKNPU2 SDK is crappy and buggy
+- RKNPU2 does not support MatMul >= 256x256 on its model convertion while U-Net has large MatMul operations.
+
+## Pitfalls
+
+- `Iterator PROGRESS_TIMER timeout` error: Mali GPU timeout is too short. Increase the timeout in the Mali GPU driver:
+    ```shell
+    echo 99999999999 > /sys/class/misc/mali0/device/progress_timeout
+    ```
+- `CS_INHERIT_FAULT` error: A GPU fault will sometimes cause subsequent GPU operations in the same process to fail. So when tuning the model, better run separate processes for each try: (in local_runners.py add maximum_process_uses=1 param to `PopenPoolExecutor`)
+- `CL_OUT_OF_HOST_MEMORY` error: See https://github.com/apache/tvm/issues/16276
+
+## Original README
+
 # Web Stable Diffusion
 
 This project brings stable diffusion models onto web browsers. **Everything runs inside the browser with no server support.** To our knowledge, this is the world’s first stable diffusion completely running on the browser. Please checkout our [demo webpage](https://websd.mlc.ai/#text-to-image-generation-demo) to try it out.
