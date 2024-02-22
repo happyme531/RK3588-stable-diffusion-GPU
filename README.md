@@ -19,7 +19,18 @@ python ./convert_model_from_pth_safetensors.py --checkpoint_path ./anythingv5.sa
 
 4. You may need to check OpenCL support on your RK3588. Follow https://llm.mlc.ai/docs/install/gpu.html#orange-pi-5-rk3588-based-sbc .
 
-5. Build the model using the following command:
+5. Edit the `build.py` script to match the model you want to build. 
+
+```python
+def trace_models(
+    device_str: str,
+) -> Tuple[tvm.IRModule, Dict[str, List[tvm.nd.NDArray]]]:
+    from diffusers import StableDiffusionPipeline
+
+    #pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5")
+    pipe = StableDiffusionPipeline.from_pretrained("./anythingv5")
+```
+6. Build the model using the following command:
 
 ```shell
 python ./build.py
@@ -27,7 +38,7 @@ python ./build.py
 
 The warning about missing tuned operators is expected. The build script will generate a `dist` directory with the built model.
 
-6. Run the model using the following command:
+7. Run the model using the following command:
 
 ```shell
 python ./deploy.py --device-name opencl
