@@ -60,11 +60,24 @@ TODO, Check the build.py script.
 
 ## Pitfalls
 
-- `Iterator PROGRESS_TIMER timeout` error: Mali GPU timeout is too short. Increase the timeout in the Mali GPU driver:
+- `torch._dynamo.exc.BackendCompilerFailed: backend='_capture' raised: AssertionError: Unsupported function type position_ids`
+  downgrade torch to 2.0.0 ~ 2.1.1(2.1.1 tested working)
+
+- ` expect a Tuple with 1 elements,  but get a Tuple with 196 elements.`                                                                                 
+  add a `[]` in utils.py:
+  ```python
+    def transform_params(
+    ...
+        #new_params[name] = vm[name + "_transform_params"](params)
+        new_params[name] = vm[name + "_transform_params"]([params])
+  ```
+  Honestly I don't know why this is happening. Version mismatch?
+
+- `dmesg` shows `Iterator PROGRESS_TIMER timeout` error: Mali GPU timeout is too short. Increase the timeout in the Mali GPU driver:
     ```shell
     echo 99999999999 > /sys/class/misc/mali0/device/progress_timeout
     ```
-- `CS_INHERIT_FAULT` error: A GPU fault will sometimes cause subsequent GPU operations in the same process to fail. So when tuning the model, better run separate processes for each try: (in local_runners.py add maximum_process_uses=1 param to `PopenPoolExecutor`)
+- `dmesg` shows `CS_INHERIT_FAULT` error: A GPU fault will sometimes cause subsequent GPU operations in the same process to fail. So when tuning the model, better run separate processes for each try: (in local_runners.py add maximum_process_uses=1 param to `PopenPoolExecutor`)
 - `CL_OUT_OF_HOST_MEMORY` error: See https://github.com/apache/tvm/issues/16276
 
 ## Original README
