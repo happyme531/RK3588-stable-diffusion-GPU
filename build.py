@@ -95,8 +95,8 @@ def trace_models(
     )
     # uncomment to use fp16 dtype for inference. 
     # will speed up the model but seems won't save memory (don't know why)
-    mod = relax.transform.ConvertToDataflow()(mod)
-    mod = relax.transform.ToMixedPrecision(out_dtype="float16")(mod)
+    # mod = relax.transform.ConvertToDataflow()(mod)
+    # mod = relax.transform.ToMixedPrecision(out_dtype="float16")(mod)
     return relax.frontend.detach_params(mod)
 
 
