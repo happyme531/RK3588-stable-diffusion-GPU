@@ -46,7 +46,113 @@ python ./deploy.py --device-name opencl
 
 ## Tuning
 
-TODO, Check the build.py script.
+1. Very recommended to tune the model on board (not using RPC) because the measurer will automatically detect a failed trial and run the next one. If you use RPC, the measurer will not detect the failed trial and will wait for timeout, which is set to ~3 minutes, causing the tuning even slower.
+
+2. Do the workarounds of 3,4 in Pitfalls section.
+
+3. Uncomment the code in `build.py` to enable tuning:
+
+```python
+    # # tuning part
+    # # delete the VAE part of the model when tuning u-net. It will interfere with the tuning. Also it can run on NPU? https://clehaxze.tw/gemlog/2023/07-15-inexhaustive-list-of-models-that-works-on-rk3588.gmi
+    # entry_funcs = ['clip', 'unet', 'dpm_solver_multistep_scheduler_convert_model_output', 'dpm_solver_multistep_scheduler_step', 'pndm_scheduler_step_0', 'pndm_scheduler_step_1', 'pndm_scheduler_step_2', 'pndm_scheduler_step_3', 'pndm_scheduler_step_4', 'image_to_rgba', 'concat_embeddings']
+
+    # new_mod = tvm.IRModule()
+    # for gv, func in mod.functions.items():
+    #     try:
+    #         if func.attrs["global_symbol"] == "main" and func.attrs["num_input"] == 1: # vae
+    #             continue
+    #     except:
+    #         pass
+    #     new_mod[gv] = func
+    # mod = new_mod
+    # mod = relax.transform.DeadCodeElimination(entry_funcs)(mod)
+    # debug_dump_script(mod, "mod_tune.py", args)
+
+    # # run tuning
+    ms.relax_integration.tune_relax(
+        mod=mod,
+        target=args.target,
+        params={},
+        builder=ms.builder.LocalBuilder(
+            max_workers=7,
+            timeout_sec=450,
+        ),
+        runner=ms.runner.LocalRunner(timeout_sec=180,  # need to be that long!
+                                     maximum_process_uses=1, # to avoid buggy behaivour of mali opencl that subsequent runs fail after the first failure # this code change is not committed yet
+                                     evaluator_config=ms.runner.config.EvaluatorConfig(
+                                            number=1,    # avoid timeout 2
+                                            repeat=1,
+                                            min_repeat_ms=0,  # https://github.com/apache/tvm/issues/16276
+                                     )),
+        # runner=runner,
+        work_dir="log_db_my",
+        max_trials_global=100000,
+        max_trials_per_task=8000,
+        seed=42,
+        num_trials_per_iter=32,
+    )
+    os._exit(0)
+```
+
+4. Execute `build.py`. Wait for a long time(>20hrs, have a good day!). You can interrupt the tuning process at any time if you notice that the latency is not improving anymore. The tuning process will save the best result so far in the `log_db_my` directory. But the tuning process will not be able to continue from the last checkpoint if you interrupt it. (Please open an feature request in TVM if you want this feature. I want it too. See: https://discuss.tvm.apache.org/t/metaschedule-how-to-resume-tuning/15298). Better to run the tuning process in a screen session. 
+
+- This is a script wrote by GPT-4 to plot the latency in the tuning process. you can use it to see if the tuning process is still improving the latency.
+```python
+import os
+import re
+import csv
+import matplotlib.pyplot as plt
+
+log_dir = 'log_db_fp16_clip_unet'
+
+log_file_path = os.path.join(log_dir, 'logs/tvm.meta_schedule.logging.task_scheduler.log')
+
+
+# 定义正则表达式模式
+pattern_trials = r'Total trials: (\d+)'
+pattern_latency = r'Total latency \(us\): ([\d\.e\+]+)'
+
+# 初始化列表存储数据
+trials_list = []
+latency_list = []
+
+# 打开日志文件
+with open(log_file_path, 'r') as file:
+    log_data = file.read()
+
+# 匹配Total trials和Total latency
+trials_matches = re.findall(pattern_trials, log_data)
+latency_matches = re.findall(pattern_latency, log_data)
+
+# 将匹配结果添加到列表中
+for trial, latency in zip(trials_matches, latency_matches):
+    trials_list.append(int(trial))
+    latency_list.append(float(latency))
+
+# 将数据写入CSV文件
+with open('trials_latency.csv', 'w', newline='') as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow(['Total trials', 'Total latency (us)'])
+    for trial, latency in zip(trials_list, latency_list):
+        writer.writerow([trial, latency])
+
+# 绘制latency随trials的变化曲线
+plt.figure(figsize=(10, 6))
+plt.plot(trials_list, latency_list, marker='')
+plt.xlabel('Total trials')
+plt.ylabel('Total latency (us)')
+plt.title('Latency vs Trials')
+plt.show()
+```
+
+5. Comment the tuning code in `build.py` and add a `MetaScheduleApplyDatabase` line to apply the result. The result applied first will not be replaced by the second one so you should apply the best result first and then the second best result.
+
+6. Test your result and see if the model is faster, or, how many hours you have wasted waiting for tuning?
+
+7. Happy hacking!
+
+8. Remember to star this repo if you find it useful!
 
 ## Limitations
 
@@ -60,10 +166,10 @@ TODO, Check the build.py script.
 
 ## Pitfalls
 
-- `torch._dynamo.exc.BackendCompilerFailed: backend='_capture' raised: AssertionError: Unsupported function type position_ids`
+1. `torch._dynamo.exc.BackendCompilerFailed: backend='_capture' raised: AssertionError: Unsupported function type position_ids`
   downgrade torch to 2.0.0 ~ 2.1.1(2.1.1 tested working)
 
-- ` expect a Tuple with 1 elements,  but get a Tuple with 196 elements.`                                                                                 
+2. ` expect a Tuple with 1 elements,  but get a Tuple with 196 elements.`                                                                                 
   add a `[]` in utils.py:
   ```python
     def transform_params(
@@ -73,12 +179,12 @@ TODO, Check the build.py script.
   ```
   Honestly I don't know why this is happening. Version mismatch?
 
-- `dmesg` shows `Iterator PROGRESS_TIMER timeout` error: Mali GPU timeout is too short. Increase the timeout in the Mali GPU driver:
+3. `dmesg` shows `Iterator PROGRESS_TIMER timeout` error: Mali GPU timeout is too short. Increase the timeout in the Mali GPU driver:
     ```shell
     echo 99999999999 > /sys/class/misc/mali0/device/progress_timeout
     ```
-- `dmesg` shows `CS_INHERIT_FAULT` error: A GPU fault will sometimes cause subsequent GPU operations in the same process to fail. So when tuning the model, better run separate processes for each try: (in local_runners.py add maximum_process_uses=1 param to `PopenPoolExecutor`)
-- `CL_OUT_OF_HOST_MEMORY` error: See https://github.com/apache/tvm/issues/16276
+4. `dmesg` shows `CS_INHERIT_FAULT` error: A GPU fault will sometimes cause subsequent GPU operations in the same process to fail. So when tuning the model, better run separate processes for each try: (in local_runners.py add maximum_process_uses=1 param to `PopenPoolExecutor`)
+5. `CL_OUT_OF_HOST_MEMORY` error: See https://github.com/apache/tvm/issues/16276
 
 ## Original README
 
