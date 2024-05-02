@@ -162,7 +162,7 @@ plt.show()
 ## Why not NPU? More FLOPS!
 
 - The RKNPU2 SDK is crappy and buggy
-- RKNPU2 does not support MatMul >= 256x256 on its model convertion while U-Net has large MatMul operations.
+- ~~RKNPU2 does not support MatMul >= 256x256 on its model convertion while U-Net has large MatMul operations.~~ Update: Since RKNPU2 SDK 2.0.0b0 the limitation is removed, so you can try to run the model on NPU. (currently I don't have the interest to do this. Better waiting for SD3 since its DiT architecture which is easier to add NPU as well as dynamic shape support?)
 
 ## Pitfalls
 
