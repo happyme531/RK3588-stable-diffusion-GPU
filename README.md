@@ -1,3 +1,5 @@
+## [UPDATE: NPU Version](https://huggingface.co/happyme531/Stable-Diffusion-1.5-LCM-ONNX-RKNN2)
+
 # MLC Stable Diffusion for RK3588's Mali GPU 
 
 Run Stable Diffusion on RK3588's Mali GPU with MLC/TVM.
@@ -159,10 +161,10 @@ plt.show()
 - Model is running in FP32. FP16 would be faster and smaller in memory but I don't know how to convert the model to FP16.
 - The model is under-tuned because tuning it is so slow (The current result is from a 48-hour tuning). The model can be further optimized by tuning it for a longer time. But try FP16 first!
 
-## Why not NPU? More FLOPS!
+## ~~Why not NPU? More FLOPS!~~
 
 - The RKNPU2 SDK is crappy and buggy
-- ~~RKNPU2 does not support MatMul >= 256x256 on its model convertion while U-Net has large MatMul operations.~~ Update: Since RKNPU2 SDK 2.0.0b0 the limitation is removed, so you can try to run the model on NPU. (currently I don't have the interest to do this. Better waiting for SD3 since its DiT architecture which is easier to add NPU as well as dynamic shape support?)
+- ~~RKNPU2 does not support MatMul >= 256x256 on its model convertion while U-Net has large MatMul operations.~~ Update: Since RKNPU2 SDK 2.0.0b0 the limitation is removed, so you can try to run the model on NPU. (currently I don't have the interest to do this. ~~Better waiting for SD3 since its DiT architecture which is easier to add NPU as well as dynamic shape support?)~~ SD3 is bad.
 
 ## Pitfalls
 
